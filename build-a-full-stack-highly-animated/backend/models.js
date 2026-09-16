@@ -1,0 +1,13 @@
+import mongoose from 'mongoose';
+const {Schema,model}=mongoose;
+const searchable={name:{type:String,required:true,trim:true},description:{type:String,default:''},location:{type:String,default:''},image:String,category:String};
+export const Project=model('Project',new Schema({...searchable,goal:Number,raised:{type:Number,default:0},featured:{type:Boolean,default:false}},{timestamps:true}));
+export const Event=model('Event',new Schema({...searchable,date:{type:Date,required:true},capacity:Number,registered:{type:Number,default:0}},{timestamps:true}));
+export const Volunteer=model('Volunteer',new Schema({name:{type:String,required:true},email:{type:String,required:true,lowercase:true},skills:String,availability:String,location:String,status:{type:String,default:'new'}},{timestamps:true}));
+export const GalleryImage=model('GalleryImage',new Schema({url:{type:String,required:true},caption:String,tags:[String],location:String},{timestamps:true}));
+export const ContactMessage=model('ContactMessage',new Schema({name:String,email:{type:String,required:true},message:String},{timestamps:true}));
+export const DonationEnquiry=model('DonationEnquiry',new Schema({name:{type:String,required:true},email:{type:String,required:true},amount:String,message:String},{timestamps:true}));
+export const SurveyResponse=model('SurveyResponse',new Schema({name:{type:String,required:true},community:{type:String,required:true},priority:String,notes:String},{timestamps:true}));
+export const AdminUser=model('AdminUser',new Schema({name:String,email:{type:String,unique:true},passwordHash:String},{timestamps:true}));
+export const SearchAnalytics=model('SearchAnalytics',new Schema({query:{type:String,index:true},count:{type:Number,default:1},lastSearched:{type:Date,default:Date.now}}));
+Project.schema.index({name:'text',category:'text',location:'text',description:'text'});Event.schema.index({name:'text',category:'text',location:'text',description:'text'});Volunteer.schema.index({skills:'text',location:'text'});GalleryImage.schema.index({tags:'text',caption:'text',location:'text'});
