@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: earthkind-api
+    runtime: node
+    rootDir: build-a-full-stack-highly-animated/backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+
+staticSites:
+  - name: earthkind-web
+    rootDir: build-a-full-stack-highly-animated/frontend
+    buildCommand: ""
+    staticPublishPath: .
