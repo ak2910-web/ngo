@@ -67,11 +67,14 @@ router.post('/opportunities/:id/apply',requireAuth,requireRole('USER'),async(req
 router.get('/me/applications',requireAuth,requireRole('USER'),async(req,res,next)=>{try{res.json(await VolunteerApplication.find({user:req.auth.id}).populate({path:'opportunity',select:'title location date duration ngo',populate:{path:'ngo',select:'name slug'}}).sort({createdAt:-1}));}catch(error){next(error);}});
 router.post('/me/applications/:id/withdraw',requireAuth,requireRole('USER'),async(req,res,next)=>{try{
   if(!validId(req.params.id))return badId(res,'Invalid application id');
-  const application=await VolunteerApplication.findOne({_id:req.params.id,user:req.auth.id});
-  if(!application)return notFound(res,'Application not found');
-  if(!['pending','accepted'].includes(application.status))return res.status(409).json({error:'This application can no longer be withdrawn'});
-  application.status='withdrawn';
-  await application.save();
+  const application=await VolunteerApplication.findOneAndUpdate(
+    {_id:req.params.id,user:req.auth.id,status:{$in:['pending','accepted']}},
+    {$set:{status:'withdrawn'}},{new:true}
+  );
+  if(!application){
+    const exists=await VolunteerApplication.exists({_id:req.params.id,user:req.auth.id});
+    return exists?res.status(409).json({error:'This application can no longer be withdrawn'}):notFound(res,'Application not found');
+  }
   await VolunteerOpportunity.updateOne({_id:application.opportunity,filled:{$gt:0}},{$inc:{filled:-1}});
   res.json({success:true,application});
 }catch(error){next(error);}});
@@ -89,11 +92,14 @@ router.post('/events/:id/register',requireAuth,requireRole('USER'),async(req,res
 router.get('/me/event-registrations',requireAuth,requireRole('USER'),async(req,res,next)=>{try{res.json(await EventRegistration.find({user:req.auth.id}).populate({path:'event',select:'name location date time image ngo',populate:{path:'ngo',select:'name slug'}}).sort({createdAt:-1}));}catch(error){next(error);}});
 router.post('/me/event-registrations/:id/cancel',requireAuth,requireRole('USER'),async(req,res,next)=>{try{
   if(!validId(req.params.id))return badId(res,'Invalid registration id');
-  const registration=await EventRegistration.findOne({_id:req.params.id,user:req.auth.id});
-  if(!registration)return notFound(res,'Event registration not found');
-  if(registration.status!=='registered')return res.status(409).json({error:'This registration is not active'});
-  registration.status='cancelled';
-  await registration.save();
+  const registration=await EventRegistration.findOneAndUpdate(
+    {_id:req.params.id,user:req.auth.id,status:'registered'},
+    {$set:{status:'cancelled'}},{new:true}
+  );
+  if(!registration){
+    const exists=await EventRegistration.exists({_id:req.params.id,user:req.auth.id});
+    return exists?res.status(409).json({error:'This registration is not active'}):notFound(res,'Event registration not found');
+  }
   await Event.updateOne({_id:registration.event,registered:{$gt:0}},{$inc:{registered:-1}});
   res.json({success:true,registration});
 }catch(error){next(error);}});
