@@ -58,11 +58,14 @@ app.post("/api/payments/razorpay/webhook", rateLimit({ windowMs: 15 * 60 * 1000,
   try {
     const event = JSON.parse(req.body.toString("utf8"));
     const payment = event.payload?.payment?.entity;
-    if (payment?.order_id && event.event === "payment.captured") {
-      await Donation.findOneAndUpdate(
-        { razorpayOrderId: payment.order_id, status: { $ne: "paid" } },
-        { $set: { status: "paid", razorpayPaymentId: payment.id, paidAt: new Date() } },
-      );
+    if (payment?.order_id && event.event === "payment.captured" && payment.id) {
+      const donation = await Donation.findOne({ razorpayOrderId: payment.order_id });
+      if (donation && payment.amount === donation.amountPaise && payment.currency === "INR") {
+        await Donation.findOneAndUpdate(
+          { _id: donation._id, status: { $ne: "paid" } },
+          { $set: { status: "paid", razorpayPaymentId: payment.id, paidAt: new Date() } },
+        );
+      }
     } else if (payment?.order_id && event.event === "payment.failed") {
       await Donation.updateOne(
         { razorpayOrderId: payment.order_id, status: { $ne: "paid" } },
