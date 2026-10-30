@@ -266,13 +266,13 @@ app.get("/api/payments/razorpay/config", (req, res) => {
 app.post("/api/payments/razorpay/orders", async (req, res, next) => {
   try {
     if (!razorpayConfigured()) return res.status(503).json({ error: "Online donations are temporarily unavailable." });
-    const name = clean(req.body.name);
+    const name = typeof req.body.name === "string" ? req.body.name.trim().slice(0, 120) : "";
     const emailAddress = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase().slice(0, 254) : "";
     const amount = Number(req.body.amount);
-    if (!name || name.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress)) {
+    if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress)) {
       return res.status(400).json({ error: "Enter a valid name and email address." });
     }
-    if (!Number.isSafeInteger(Math.round(amount * 100)) || amount < 1 || amount > 100000) {
+    if (!Number.isSafeInteger(amount * 100) || !Number.isInteger(amount) || amount < 1 || amount > 100000) {
       return res.status(400).json({ error: "Donation amount must be between ₹1 and ₹1,00,000." });
     }
     const amountPaise = Math.round(amount * 100);
