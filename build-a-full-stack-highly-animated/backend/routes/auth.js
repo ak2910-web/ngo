@@ -25,6 +25,13 @@ const loginLimiter=rateLimit({
   legacyHeaders:false,
   message:{error:'Too many login attempts. Please try again in 15 minutes.'}
 });
+const passwordResetLimiter=rateLimit({
+  windowMs:15*60*1000,
+  max:5,
+  standardHeaders:true,
+  legacyHeaders:false,
+  message:{error:'Too many password reset attempts. Please try again later.'}
+});
 const mailer=process.env.SMTP_HOST?nodemailer.createTransport({
   host:process.env.SMTP_HOST,
   port:Number(process.env.SMTP_PORT)||587,
@@ -34,25 +41,29 @@ const mailer=process.env.SMTP_HOST?nodemailer.createTransport({
 const resetFrontend=(process.env.FRONTEND_ORIGIN||'http://localhost:3000').split(',')[0].trim().replace(/\/+$/,'');
 
 async function issuePasswordReset(account,accountType){
-  const rawToken=crypto.randomBytes(32).toString('hex');
-  await PasswordResetToken.create({
-    user:account._id,
-    accountType,
-    tokenHash:crypto.createHash('sha256').update(rawToken).digest('hex'),
-    expiresAt:new Date(Date.now()+60*60*1000)
-  });
-  const link=`${resetFrontend}/reset-password.html?token=${encodeURIComponent(rawToken)}`;
-  if(!mailer) {
+  if(!mailer){
     console.warn('Password reset requested but SMTP is not configured.');
     return false;
   }
-  await mailer.sendMail({
-    from:process.env.MAIL_FROM||'EarthKind <noreply@earthkind.org>',
-    to:account.email,
-    subject:'Reset your EarthKind password',
-    text:`We received a request to reset your EarthKind password. This link expires in one hour and can be used once:\n\n${link}\n\nIf you did not request this, you can ignore this email.`
+  const rawToken=crypto.randomBytes(32).toString('hex');
+  const reset=await PasswordResetToken.create({
+    user:account._id, accountType,
+    tokenHash:crypto.createHash('sha256').update(rawToken).digest('hex'),
+    expiresAt:new Date(Date.now()+60*60*1000)
   });
-  return true;
+  const link=resetFrontend+'/reset-password.html?token='+encodeURIComponent(rawToken);
+  try {
+    await mailer.sendMail({
+      from:process.env.MAIL_FROM||'EarthKind <noreply@earthkind.org>',
+      to:account.email,
+      subject:'Reset your EarthKind password',
+      text:'We received a request to reset your EarthKind password. This link expires in one hour and can be used once:\n\n'+link+'\n\nIf you did not request this, you can ignore this email.'
+    });
+    return true;
+  } catch(error) {
+    await PasswordResetToken.deleteOne({_id:reset._id});
+    throw error;
+  }
 }
 
 router.post('/register',async(req,res,next)=>{
@@ -102,7 +113,7 @@ router.post('/ngo/register',async(req,res,next)=>{
 router.get('/me',requireAuth,(req,res)=>res.json({user:req.auth.account,role:req.auth.role}));
 router.post('/logout',requireAuth,async(req,res,next)=>{try{const Model=req.auth.role==='ADMIN'?AdminUser:req.auth.role==='NGO'?NGO:User;await Model.findByIdAndUpdate(req.auth.id,{$inc:{tokenVersion:1}});res.json({success:true});}catch(error){next(error);}});
 
-router.post('/forgot-password',async(req,res,next)=>{
+router.post('/forgot-password',passwordResetLimiter,async(req,res,next)=>{
   try{
     const email=clean(req.body.email)?.toLowerCase();
     if(!emailPattern.test(email||''))return invalid(res,'A valid email is required');
@@ -116,7 +127,7 @@ router.post('/forgot-password',async(req,res,next)=>{
   }catch(error){next(error);}
 });
 
-router.post('/reset-password',async(req,res,next)=>{
+router.post('/reset-password',passwordResetLimiter,async(req,res,next)=>{
   try{
     const rawToken=clean(req.body.token),password=req.body.password;
     if(!rawToken||!passwordOk(password))return invalid(res,'A reset token and password of at least 8 characters are required');
