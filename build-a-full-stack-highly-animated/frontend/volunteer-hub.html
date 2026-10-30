@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Volunteer Portal | EarthKind</title><link rel="stylesheet" href="styles.css">
+<style>
+:root{--green:#173f35;--mint:#eaf2ec;--muted:#68756d}
+body{background:#f6f8f4;color:#20332a}.hub{max-width:1120px;margin:48px auto;padding:0 22px}
+.hub-hero{padding:36px;border-radius:24px;background:#173f35;color:#fff}.hub-hero h1{font-size:clamp(2rem,5vw,3.3rem);margin:8px 0}.hub-hero p{max-width:650px;color:#dce9df;line-height:1.65}
+.hub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;margin-top:24px}
+.panel{background:#fff;border:1px solid #e3e9e1;border-radius:18px;padding:24px;min-width:0}.panel h2{color:var(--green);margin:0 0 14px}
+.field{display:grid;gap:7px;margin:13px 0}.field label{font-weight:650;font-size:.9rem}.field input,.field textarea{width:100%;padding:12px;border:1px solid #d9e1d8;border-radius:9px;font:inherit}.field textarea{min-height:90px;resize:vertical}
+.action{border:0;border-radius:9px;padding:12px 16px;background:var(--green);color:#fff;font-weight:700;cursor:pointer}.action:disabled{opacity:.55;cursor:not-allowed}
+.muted{color:var(--muted)}.switch{border:0;background:none;color:#28624f;text-decoration:underline;cursor:pointer;padding:8px 0}
+.status{min-height:24px;margin-top:12px;font-size:.92rem}.error{color:#b42318}.success{color:#176b43}
+.item{border-top:1px solid #edf0eb;padding:16px 0}.item h3{margin:0 0 5px;color:#203b30}.item p{margin:6px 0;color:var(--muted);line-height:1.5}.item small{color:#68756d}
+.item button{margin-top:9px}.pill{display:inline-block;padding:4px 9px;border-radius:99px;background:var(--mint);color:#245642;font-size:.78rem;font-weight:700}
+#memberArea[hidden],#authArea[hidden]{display:none}
+@media(max-width:760px){.hub-grid{grid-template-columns:1fr}.hub-hero{padding:26px}.hub{margin:24px auto}}
+</style>
+</head>
+<body>
+<nav class="site-nav"><a class="brand" href="index.html"><span class="brand-mark">+</span> earthkind</a><div class="navlinks"><a href="ngos.html">Explore NGOs</a><a href="projects.html">Projects</a><a href="events.html">Events</a></div><div class="nav-actions"><a class="nav-login" href="index.html">Home</a></div></nav>
+<main class="hub">
+<section class="hub-hero"><p class="kicker">YOUR IMPACT STARTS HERE</p><h1>Volunteer with purpose.</h1><p>Create your free volunteer account to discover opportunities from verified NGOs, apply to roles, register for community events, and keep track of your activity.</p></section>
+<section id="authArea" class="hub-grid">
+<article class="panel">
+<h2 id="authTitle">Sign in</h2><p class="muted" id="authIntro">Welcome back. Sign in to manage your volunteer activity.</p>
+<form id="authForm">
+<div class="field" id="nameField" hidden><label for="name">Full name</label><input id="name" name="name" autocomplete="name"></div>
+<div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" required></div>
+<div class="field"><label for="password">Password</label><input id="password" name="password" type="password" minlength="8" maxlength="128" autocomplete="current-password" required></div>
+<button class="action" id="authSubmit" type="submit">Sign in</button>
+</form>
+<button class="switch" id="authSwitch" type="button">Create a volunteer account</button>
+<p class="status" id="authMessage" role="status" aria-live="polite"></p>
+</article>
+<article class="panel"><h2>Forgot your password?</h2><p class="muted">Enter your account email and we'll send a one-time reset link if the account exists.</p>
+<form id="forgotForm"><div class="field"><label for="resetEmail">Email address</label><input id="resetEmail" type="email" required></div><button class="action" type="submit">Send reset link</button></form><p class="status" id="forgotMessage" role="status" aria-live="polite"></p>
+</article></section>
+<section id="memberArea" hidden>
+<div class="panel" style="margin-top:24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap"><div><span class="pill">VOLUNTEER ACCOUNT</span><h2 style="margin:10px 0 4px">Welcome, <span id="memberName">volunteer</span></h2><p class="muted" id="memberEmail"></p></div><button class="action" id="logoutButton" type="button">Sign out</button></div>
+<div class="hub-grid">
+<article class="panel"><h2>Open opportunities</h2><div id="opportunityList"><p class="muted">Loading opportunities…</p></div></article>
+<article class="panel"><h2>Upcoming events</h2><div id="eventList"><p class="muted">Loading events…</p></div></article>
+<article class="panel"><h2>My applications</h2><div id="applicationList"><p class="muted">Sign in to see your applications.</p></div></article>
+<article class="panel"><h2>My event registrations</h2><div id="registrationList"><p class="muted">Sign in to see your registrations.</p></div></article>
+</div></section>
+</main>
+<script>
+const API="https://ngo-pi3s.onrender.com/api";
+const tokenKey="earthkind_token";
+let mode="login";
+const $=selector=>document.querySelector(selector);
+const escapeHtml=value=>String(value??"").replace(/[&<>'"]/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[char]));
+const token=()=>localStorage.getItem(tokenKey);
+async function request(path,options={}){const headers={"Content-Type":"application/json",...(options.headers||{})};if(token())headers.Authorization="Bearer "+token();const response=await fetch(API+path,{...options,headers});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||"Request failed");return data;}
+function setMessage(target,message,type=""){target.textContent=message;target.className="status "+type;}
+function showMode(next){mode=next;const signup=mode==="signup";$("#authTitle").textContent=signup?"Create your account":"Sign in";$("#authIntro").textContent=signup?"Join EarthKind and find a way to help your community.":"Welcome back. Sign in to manage your volunteer activity.";$("#nameField").hidden=!signup;$("#name").required=signup;$("#password").autocomplete=signup?"new-password":"current-password";$("#authSubmit").textContent=signup?"Create account":"Sign in";$("#authSwitch").textContent=signup?"Already have an account? Sign in":"Create a volunteer account";setMessage($("#authMessage"),"");}
+$("#authSwitch").addEventListener("click",()=>showMode(mode==="login"?"signup":"login"));
+$("#authForm").addEventListener("submit",async event=>{event.preventDefault();const button=$("#authSubmit");button.disabled=true;try{const payload={email:$("#email").value.trim(),password:$("#password").value};const data=await request(mode==="signup"?"/auth/register":"/auth/login",{method:"POST",body:JSON.stringify(mode==="signup"?{...payload,name:$("#name").value.trim()}:payload)});localStorage.setItem(tokenKey,data.token);setMessage($("#authMessage"),"Signed in successfully.","success");await loadMember();}catch(error){setMessage($("#authMessage"),error.message,"error");}finally{button.disabled=false;}});
+$("#forgotForm").addEventListener("submit",async event=>{event.preventDefault();try{const data=await request("/auth/forgot-password",{method:"POST",body:JSON.stringify({email:$("#resetEmail").value.trim()})});setMessage($("#forgotMessage"),data.message||"If the account exists, a reset email will be sent.","success");}catch(error){setMessage($("#forgotMessage"),error.message,"error");}});
+$("#logoutButton").addEventListener("click",async()=>{try{await request("/auth/logout",{method:"POST"});}catch{}localStorage.removeItem(tokenKey);$("#memberArea").hidden=true;$("#authArea").hidden=false;showMode("login");});
+async function loadMember(){const data=await request("/auth/me");if(data.role!=="USER")throw new Error("This portal is for volunteer accounts. Please sign out and use the correct account.");$("#authArea").hidden=true;$("#memberArea").hidden=false;$("#memberName").textContent=data.user.name||"volunteer";$("#memberEmail").textContent=data.user.email||"";await Promise.all([loadOpportunities(),loadEvents(),loadApplications(),loadRegistrations()]);}
+async function loadOpportunities(){const target=$("#opportunityList");try{const items=await request("/opportunities");target.innerHTML=items.length?items.map(item=>`<div class="item"><h3>${escapeHtml(item.title)}</h3><small>${escapeHtml(item.ngo?.name||"Verified NGO")} · ${escapeHtml(item.location||item.type||"Flexible")}</small><p>${escapeHtml(item.description||"Make a difference with this organization.")}</p><button class="action" data-apply="${escapeHtml(item._id)}">Apply</button></div>`).join(""):"<p class='muted'>No published opportunities yet.</p>";target.querySelectorAll("[data-apply]").forEach(button=>button.addEventListener("click",()=>apply(button.dataset.apply,button)));}catch(error){target.textContent=error.message;}}
+async function apply(id,button){const skills=prompt("Tell the NGO about your relevant skills (optional):")||"";const motivation=prompt("Why would you like to volunteer?")||"";if(!confirm("Submit your volunteer application?"))return;button.disabled=true;try{await request("/opportunities/"+encodeURIComponent(id)+"/apply",{method:"POST",body:JSON.stringify({skills,motivation,consent:true})});alert("Application submitted!");await Promise.all([loadApplications(),loadOpportunities()]);}catch(error){alert(error.message);button.disabled=false;}}
+async function loadEvents(){const target=$("#eventList");try{const result=await request("/events?limit=30");const items=result.data||[];target.innerHTML=items.length?items.map(item=>`<div class="item"><h3>${escapeHtml(item.name)}</h3><small>${escapeHtml(item.location||"Community event")} · ${item.date?new Date(item.date).toLocaleDateString():"Date to be announced"}</small><p>${escapeHtml(item.description||"Join this community event.")}</p><button class="action" data-register="${escapeHtml(item._id)}">Register</button></div>`).join(""):"<p class='muted'>No upcoming events yet.</p>";target.querySelectorAll("[data-register]").forEach(button=>button.addEventListener("click",()=>registerEvent(button.dataset.register,button)));}catch(error){target.textContent=error.message;}}
+async function registerEvent(id,button){button.disabled=true;try{await request("/events/"+encodeURIComponent(id)+"/register",{method:"POST",body:"{}"});alert("You are registered for this event.");await loadRegistrations();}catch(error){alert(error.message);button.disabled=false;}}
+async function loadApplications(){const target=$("#applicationList");try{const items=await request("/me/applications");target.innerHTML=items.length?items.map(item=>`<div class="item"><h3>${escapeHtml(item.opportunity?.title||"Opportunity")}</h3><span class="pill">${escapeHtml(item.status)}</span><p>${escapeHtml(item.opportunity?.ngo?.name||"EarthKind NGO")}</p></div>`).join(""):"<p class='muted'>You haven't applied to an opportunity yet.</p>";}catch(error){target.textContent=error.message;}}
+async function loadRegistrations(){const target=$("#registrationList");try{const items=await request("/me/event-registrations");target.innerHTML=items.length?items.map(item=>`<div class="item"><h3>${escapeHtml(item.event?.name||"Community event")}</h3><span class="pill">${escapeHtml(item.status)}</span><p>${escapeHtml(item.event?.ngo?.name||"EarthKind NGO")}</p></div>`).join(""):"<p class='muted'>You haven't registered for an event yet.</p>";}catch(error){target.textContent=error.message;}}
+if(token()){loadMember().catch(()=>{localStorage.removeItem(tokenKey);});}
+</script>
+</body>
+</html>
