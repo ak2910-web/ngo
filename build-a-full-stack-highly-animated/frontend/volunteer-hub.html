@@ -61,13 +61,72 @@ $("#authSwitch").addEventListener("click",()=>showMode(mode==="login"?"signup":"
 $("#authForm").addEventListener("submit",async event=>{event.preventDefault();const button=$("#authSubmit");button.disabled=true;try{const payload={email:$("#email").value.trim(),password:$("#password").value};const data=await request(mode==="signup"?"/auth/register":"/auth/login",{method:"POST",body:JSON.stringify(mode==="signup"?{...payload,name:$("#name").value.trim()}:payload)});if(data.user?.role!=="USER")throw new Error("This portal is for volunteer accounts. Please use your volunteer login.");localStorage.setItem(tokenKey,data.token);setMessage($("#authMessage"),"Signed in successfully.","success");await loadMember();}catch(error){setMessage($("#authMessage"),error.message,"error");}finally{button.disabled=false;}});
 $("#forgotForm").addEventListener("submit",async event=>{event.preventDefault();try{const data=await request("/auth/forgot-password",{method:"POST",body:JSON.stringify({email:$("#resetEmail").value.trim()})});setMessage($("#forgotMessage"),data.message||"If the account exists, a reset email will be sent.","success");}catch(error){setMessage($("#forgotMessage"),error.message,"error");}});
 $("#logoutButton").addEventListener("click",async()=>{try{await request("/auth/logout",{method:"POST"});}catch{}localStorage.removeItem(tokenKey);$("#memberArea").hidden=true;$("#authArea").hidden=false;showMode("login");});
-async function loadMember(){const data=await request("/auth/me");if(data.role!=="USER")throw new Error("This portal is for volunteer accounts. Please sign out and use the correct account.");$("#authArea").hidden=true;$("#memberArea").hidden=false;$("#memberName").textContent=data.user.name||"volunteer";$("#memberEmail").textContent=data.user.email||"";await Promise.all([loadOpportunities(),loadEvents(),loadApplications(),loadRegistrations()]);}
-async function loadOpportunities(){const target=$("#opportunityList");try{const items=await request("/opportunities");target.innerHTML=items.length?items.map(item=>`<div class="item"><h3>${escapeHtml(item.title)}</h3><small>${escapeHtml(item.ngo?.name||"Verified NGO")} · ${escapeHtml(item.location||item.type||"Flexible")}</small><p>${escapeHtml(item.description||"Make a difference with this organization.")}</p><button class="action" data-apply="${escapeHtml(item._id)}">Apply</button></div>`).join(""):"<p class='muted'>No published opportunities yet.</p>";target.querySelectorAll("[data-apply]").forEach(button=>button.addEventListener("click",()=>apply(button.dataset.apply,button)));}catch(error){target.textContent=error.message;}}
+let currentApplications=[];
+let currentRegistrations=[];
+async function loadMember(){
+ const data=await request("/auth/me");
+ if(data.role!=="USER")throw new Error("This portal is for volunteer accounts. Please sign out and use the correct account.");
+ $("#authArea").hidden=true;$("#memberArea").hidden=false;
+ $("#memberName").textContent=data.user.name||"volunteer";$("#memberEmail").textContent=data.user.email||"";
+ await Promise.all([loadApplications(),loadRegistrations()]);
+ await Promise.all([loadOpportunities(),loadEvents()]);
+}
+async function loadOpportunities(){
+ const target=$("#opportunityList");
+ try{
+  const items=await request("/opportunities");
+  target.innerHTML=items.length?items.map(item=>{
+   const already=currentApplications.some(app=>String(app.opportunity?._id||app.opportunity)===String(item._id)&&app.status!=="withdrawn");
+   const full=Number(item.slots)>0&&Number(item.filled||0)>=Number(item.slots);
+   const remaining=item.slots?Math.max(0,Number(item.slots)-Number(item.filled||0))+" places remaining":"Open slots";
+   return "<div class='item'><h3>"+escapeHtml(item.title)+"</h3><small>"+escapeHtml(item.ngo?.name||"Verified NGO")+" · "+escapeHtml(item.location||item.type||"Flexible")+"</small><p>"+escapeHtml(item.description||"Make a difference with this organization.")+"</p><small>"+remaining+"</small><br><button class='action' data-apply='"+escapeHtml(item._id)+"' "+(already||full?"disabled":"")+">"+(already?"Already applied":full?"Opportunity full":"Apply")+"</button></div>";
+  }).join(""):"<p class='muted'>No published opportunities yet.</p>";
+  target.querySelectorAll("[data-apply]:not(:disabled)").forEach(button=>button.addEventListener("click",()=>apply(button.dataset.apply,button)));
+ }catch(error){target.textContent=error.message;}
+}
 async function apply(id,button){const skills=prompt("Tell the NGO about your relevant skills (optional):")||"";const motivation=prompt("Why would you like to volunteer?")||"";if(!confirm("I confirm that the details in my application are accurate and agree to be contacted by this NGO about this volunteer opportunity. Submit application?"))return;button.disabled=true;try{await request("/opportunities/"+encodeURIComponent(id)+"/apply",{method:"POST",body:JSON.stringify({skills,motivation,consent:true})});alert("Application submitted!");await Promise.all([loadApplications(),loadOpportunities()]);}catch(error){alert(error.message);button.disabled=false;}}
-async function loadEvents(){const target=$("#eventList");try{const result=await request("/events?limit=30");const items=result.data||[];target.innerHTML=items.length?items.map(item=>`<div class="item"><h3>${escapeHtml(item.name)}</h3><small>${escapeHtml(item.location||"Community event")} · ${item.date?new Date(item.date).toLocaleDateString():"Date to be announced"}</small><p>${escapeHtml(item.description||"Join this community event.")}</p><button class="action" data-register="${escapeHtml(item._id)}">Register</button></div>`).join(""):"<p class='muted'>No upcoming events yet.</p>";target.querySelectorAll("[data-register]").forEach(button=>button.addEventListener("click",()=>registerEvent(button.dataset.register,button)));}catch(error){target.textContent=error.message;}}
+async function loadEvents(){
+ const target=$("#eventList");
+ try{
+  const result=await request("/events?limit=30"),items=result.data||[];
+  target.innerHTML=items.length?items.map(item=>{
+   const registered=currentRegistrations.some(reg=>String(reg.event?._id||reg.event)===String(item._id)&&reg.status==="registered");
+   const full=Number(item.capacity)>0&&Number(item.registered||0)>=Number(item.capacity);
+   const remaining=item.capacity?Math.max(0,Number(item.capacity)-Number(item.registered||0))+" places remaining":"Registration open";
+   return "<div class='item'><h3>"+escapeHtml(item.name)+"</h3><small>"+escapeHtml(item.location||"Community event")+" · "+(item.date?new Date(item.date).toLocaleDateString():"Date to be announced")+"</small><p>"+escapeHtml(item.description||"Join this community event.")+"</p><small>"+remaining+"</small><br><button class='action' data-register='"+escapeHtml(item._id)+"' "+(registered||full?"disabled":"")+">"+(registered?"Registered":full?"Event full":"Register")+"</button></div>";
+  }).join(""):"<p class='muted'>No upcoming events yet.</p>";
+  target.querySelectorAll("[data-register]:not(:disabled)").forEach(button=>button.addEventListener("click",()=>registerEvent(button.dataset.register,button)));
+ }catch(error){target.textContent=error.message;}
+}
 async function registerEvent(id,button){button.disabled=true;try{await request("/events/"+encodeURIComponent(id)+"/register",{method:"POST",body:"{}"});alert("You are registered for this event.");await loadRegistrations();}catch(error){alert(error.message);button.disabled=false;}}
-async function loadApplications(){const target=$("#applicationList");try{const items=await request("/me/applications");target.innerHTML=items.length?items.map(item=>`<div class="item"><h3>${escapeHtml(item.opportunity?.title||"Opportunity")}</h3><span class="pill">${escapeHtml(item.status)}</span><p>${escapeHtml(item.opportunity?.ngo?.name||"EarthKind NGO")}</p></div>`).join(""):"<p class='muted'>You haven't applied to an opportunity yet.</p>";}catch(error){target.textContent=error.message;}}
-async function loadRegistrations(){const target=$("#registrationList");try{const items=await request("/me/event-registrations");target.innerHTML=items.length?items.map(item=>`<div class="item"><h3>${escapeHtml(item.event?.name||"Community event")}</h3><span class="pill">${escapeHtml(item.status)}</span><p>${escapeHtml(item.event?.ngo?.name||"EarthKind NGO")}</p></div>`).join(""):"<p class='muted'>You haven't registered for an event yet.</p>";}catch(error){target.textContent=error.message;}}
+async function loadApplications(){
+ const target=$("#applicationList");
+ try{
+  currentApplications=await request("/me/applications");
+  target.innerHTML=currentApplications.length?currentApplications.map(item=>"<div class='item'><h3>"+escapeHtml(item.opportunity?.title||"Opportunity")+"</h3><span class='pill'>"+escapeHtml(item.status)+"</span><p>"+escapeHtml(item.opportunity?.ngo?.name||"EarthKind NGO")+"</p><small>Applied "+(item.createdAt?new Date(item.createdAt).toLocaleDateString():"")+"</small>"+(["pending","accepted"].includes(item.status)?"<br><button class='switch' data-withdraw='"+escapeHtml(item._id)+"'>Withdraw application</button>":"")+"</div>").join(""):"<p class='muted'>You haven't applied to an opportunity yet.</p>";
+  target.querySelectorAll("[data-withdraw]").forEach(button=>button.addEventListener("click",()=>withdrawApplication(button.dataset.withdraw,button)));
+ }catch(error){target.textContent=error.message;}
+}
+async function withdrawApplication(id,button){
+ if(!confirm("Withdraw this volunteer application?"))return;
+ button.disabled=true;
+ try{await request("/me/applications/"+encodeURIComponent(id)+"/withdraw",{method:"POST",body:"{}"});await Promise.all([loadApplications(),loadOpportunities()]);}
+ catch(error){alert(error.message);button.disabled=false;}
+}
+async function loadRegistrations(){
+ const target=$("#registrationList");
+ try{
+  currentRegistrations=await request("/me/event-registrations");
+  target.innerHTML=currentRegistrations.length?currentRegistrations.map(item=>"<div class='item'><h3>"+escapeHtml(item.event?.name||"Community event")+"</h3><span class='pill'>"+escapeHtml(item.status)+"</span><p>"+escapeHtml(item.event?.ngo?.name||"EarthKind NGO")+"</p><small>"+(item.event?.date?new Date(item.event.date).toLocaleDateString():"")+"</small>"+(item.status==="registered"?"<br><button class='switch' data-cancel-event='"+escapeHtml(item._id)+"'>Cancel registration</button>":"")+"</div>").join(""):"<p class='muted'>You haven't registered for an event yet.</p>";
+  target.querySelectorAll("[data-cancel-event]").forEach(button=>button.addEventListener("click",()=>cancelEvent(button.dataset.cancelEvent,button)));
+ }catch(error){target.textContent=error.message;}
+}
+async function cancelEvent(id,button){
+ if(!confirm("Cancel your registration for this event?"))return;
+ button.disabled=true;
+ try{await request("/me/event-registrations/"+encodeURIComponent(id)+"/cancel",{method:"POST",body:"{}"});await Promise.all([loadRegistrations(),loadEvents()]);}
+ catch(error){alert(error.message);button.disabled=false;}
+}
 if(token()){loadMember().catch(()=>{localStorage.removeItem(tokenKey);});}
 </script>
 </body>
