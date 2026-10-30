@@ -1,4 +1,5 @@
 import "dotenv/config";
+import crypto from "node:crypto";
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
@@ -9,7 +10,7 @@ import multer from "multer";
 import nodemailer from "nodemailer";
 import {
   Project, Event, Volunteer, VolunteerOpportunity, GalleryImage,
-  ContactMessage, SurveyResponse, DonationEnquiry, AdminUser,
+  ContactMessage, SurveyResponse, DonationEnquiry, Donation, AdminUser,
   SearchAnalytics, NGO,
 } from "./models.js";
 import authRouter from "./routes/auth.js";
@@ -42,6 +43,39 @@ app.use(cors({
       ? callback(null, true)
       : callback(new Error("Origin is not allowed")),
 }));
+
+// Razorpay webhooks require the untouched request bytes for signature verification.
+app.post("/api/payments/razorpay/webhook", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  const signature = req.get("x-razorpay-signature");
+  if (!secret || !signature || !Buffer.isBuffer(req.body)) return res.sendStatus(400);
+  const expected = crypto.createHmac("sha256", secret).update(req.body).digest("hex");
+  const supplied = Buffer.from(signature, "utf8");
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  if (supplied.length !== expectedBuffer.length || !crypto.timingSafeEqual(supplied, expectedBuffer)) {
+    return res.sendStatus(400);
+  }
+  try {
+    const event = JSON.parse(req.body.toString("utf8"));
+    const payment = event.payload?.payment?.entity;
+    if (payment?.order_id && event.event === "payment.captured") {
+      await Donation.findOneAndUpdate(
+        { razorpayOrderId: payment.order_id, status: { $ne: "paid" } },
+        { $set: { status: "paid", razorpayPaymentId: payment.id, paidAt: new Date() } },
+      );
+    } else if (payment?.order_id && event.event === "payment.failed") {
+      await Donation.updateOne(
+        { razorpayOrderId: payment.order_id, status: { $ne: "paid" } },
+        { $set: { status: "failed", failureReason: String(payment.error_description || "Payment failed").slice(0, 300) } },
+      );
+    }
+    return res.json({ received: true });
+  } catch (error) {
+    console.error("Razorpay webhook processing failed:", error.message);
+    return res.sendStatus(400);
+  }
+});
+
 app.use(express.json({ limit: "100kb" }));
 app.use("/uploads", express.static("uploads"));
 app.use(morgan("tiny"));
@@ -214,6 +248,110 @@ app.post("/api/survey", valid(["name", "community"]), async (req, res, next) => 
       name: clean(req.body.name), community: clean(req.body.community),
       priority: clean(req.body.priority), notes: clean(req.body.notes),
     }));
+  } catch (error) { next(error); }
+});
+
+
+const razorpayConfigured = () => Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+const razorpayAuth = () => "Basic " + Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString("base64");
+
+app.get("/api/payments/razorpay/config", (req, res) => {
+  if (!razorpayConfigured()) return res.status(503).json({ error: "Online donations are temporarily unavailable." });
+  res.set("Cache-Control", "no-store").json({ keyId: process.env.RAZORPAY_KEY_ID, currency: "INR" });
+});
+
+app.post("/api/payments/razorpay/orders", async (req, res, next) => {
+  try {
+    if (!razorpayConfigured()) return res.status(503).json({ error: "Online donations are temporarily unavailable." });
+    const name = clean(req.body.name);
+    const emailAddress = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase().slice(0, 254) : "";
+    const amount = Number(req.body.amount);
+    if (!name || name.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress)) {
+      return res.status(400).json({ error: "Enter a valid name and email address." });
+    }
+    if (!Number.isSafeInteger(Math.round(amount * 100)) || amount < 1 || amount > 100000) {
+      return res.status(400).json({ error: "Donation amount must be between ₹1 and ₹1,00,000." });
+    }
+    const amountPaise = Math.round(amount * 100);
+    const receipt = `ek_${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const response = await fetch("https://api.razorpay.com/v1/orders", {
+      method: "POST",
+      headers: { Authorization: razorpayAuth(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount: amountPaise, currency: "INR", receipt,
+        notes: { donor_name: name.slice(0, 120), donor_email: emailAddress },
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    const order = await response.json();
+    if (!response.ok || !order.id) {
+      console.error("Razorpay order creation failed:", order.error?.code || response.status);
+      return res.status(502).json({ error: "Could not start payment. Please try again." });
+    }
+    await Donation.create({
+      name, email: emailAddress, amountPaise, currency: "INR",
+      razorpayOrderId: order.id, status: "created",
+    });
+    res.status(201).json({
+      orderId: order.id, amount: order.amount, currency: order.currency,
+      keyId: process.env.RAZORPAY_KEY_ID,
+    });
+  } catch (error) {
+    if (error.name === "TimeoutError") return res.status(504).json({ error: "Payment service timed out. Please try again." });
+    next(error);
+  }
+});
+
+app.post("/api/payments/razorpay/verify", async (req, res, next) => {
+  try {
+    if (!razorpayConfigured()) return res.status(503).json({ error: "Payment verification is unavailable." });
+    const orderId = typeof req.body.razorpay_order_id === "string" ? req.body.razorpay_order_id : "";
+    const paymentId = typeof req.body.razorpay_payment_id === "string" ? req.body.razorpay_payment_id : "";
+    const signature = typeof req.body.razorpay_signature === "string" ? req.body.razorpay_signature : "";
+    if (!orderId || !paymentId || !signature || orderId.length > 100 || paymentId.length > 100) {
+      return res.status(400).json({ error: "Payment details are incomplete." });
+    }
+    const expected = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(`${orderId}|${paymentId}`).digest("hex");
+    const actualBuffer = Buffer.from(signature, "hex");
+    const expectedBuffer = Buffer.from(expected, "hex");
+    if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) {
+      return res.status(400).json({ error: "Payment signature could not be verified." });
+    }
+    const donation = await Donation.findOne({ razorpayOrderId: orderId });
+    if (!donation) return res.status(404).json({ error: "Donation order was not found." });
+    if (donation.status === "paid" && donation.razorpayPaymentId === paymentId) {
+      return res.json({ success: true, status: "paid", message: "Donation confirmed. Thank you!" });
+    }
+    const response = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`, {
+      headers: { Authorization: razorpayAuth() }, signal: AbortSignal.timeout(12000),
+    });
+    const payment = await response.json();
+    if (!response.ok || payment.order_id !== orderId || payment.amount !== donation.amountPaise || payment.currency !== "INR") {
+      return res.status(400).json({ error: "Payment details do not match this donation." });
+    }
+    if (payment.status !== "captured") {
+      return res.status(202).json({ success: true, status: payment.status, message: "Payment received and is being confirmed. Please check again shortly." });
+    }
+    donation.status = "paid";
+    donation.razorpayPaymentId = paymentId;
+    donation.paidAt = new Date();
+    await donation.save();
+    res.json({ success: true, status: "paid", message: "Donation confirmed. Thank you!" });
+  } catch (error) {
+    if (error.name === "TimeoutError") return res.status(504).json({ error: "Payment verification timed out. Please try again." });
+    next(error);
+  }
+});
+
+app.get("/api/payments/razorpay/status/:orderId", async (req, res, next) => {
+  try {
+    const orderId = String(req.params.orderId || "").slice(0, 100);
+    const donation = await Donation.findOne({ razorpayOrderId: orderId }).select("status amountPaise currency");
+    if (!donation) return res.status(404).json({ error: "Donation order was not found." });
+    res.set("Cache-Control", "no-store").json({
+      status: donation.status, amount: donation.amountPaise, currency: donation.currency,
+    });
   } catch (error) { next(error); }
 });
 
