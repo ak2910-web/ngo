@@ -21,6 +21,17 @@ SavedItem.schema.index({user:1,itemType:1,item:1},{unique:true});
 export const PasswordResetToken=model('PasswordResetToken',new Schema({user:{...objectId,required:true},accountType:{type:String,enum:['USER','NGO','ADMIN'],default:'USER'},tokenHash:{type:String,required:true,unique:true},expiresAt:{type:Date,required:true},usedAt:Date},{timestamps:true}));
 PasswordResetToken.schema.index({expiresAt:1},{expireAfterSeconds:0});
 export const ContactMessage=model('ContactMessage',new Schema({name:String,email:{type:String,required:true},message:String,status:{type:String,enum:['new','contacted','replied','closed'],default:'new'},followUpAt:Date,adminNotes:String,repliedAt:Date},{timestamps:true}));
+export const Donation=model('Donation',new Schema({
+  name:{type:String,required:true,trim:true,maxlength:120},
+  email:{type:String,required:true,lowercase:true,trim:true},
+  amountPaise:{type:Number,required:true,min:100,max:10000000},
+  currency:{type:String,enum:['INR'],default:'INR'},
+  razorpayOrderId:{type:String,required:true,unique:true,index:true},
+  razorpayPaymentId:{type:String,unique:true,sparse:true},
+  status:{type:String,enum:['created','paid','failed'],default:'created',index:true},
+  failureReason:{type:String,default:''},
+  paidAt:Date,
+},{timestamps:true}));
 export const DonationEnquiry=model('DonationEnquiry',new Schema({name:{type:String,required:true},email:{type:String,required:true},amount:String,message:String},{timestamps:true}));
 export const SurveyResponse=model('SurveyResponse',new Schema({name:{type:String,required:true},community:{type:String,required:true},priority:String,notes:String},{timestamps:true}));
 export const AdminUser=model('AdminUser',new Schema({name:String,email:{type:String,unique:true},passwordHash:String,role:{type:String,enum:['ADMIN'],default:'ADMIN'},tokenVersion:{type:Number,default:0}},{timestamps:true}));
