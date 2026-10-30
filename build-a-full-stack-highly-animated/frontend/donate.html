@@ -241,6 +241,18 @@
         background: #edf1fa;
         color: var(--ink);
       }
+
+      .donation-form { display:grid; gap:14px; margin-top:20px; }
+      .donation-form label { display:grid; gap:7px; color:#3e4864; font-size:13px; font-weight:700; }
+      .donation-form input { width:100%; border:1px solid var(--line); border-radius:11px; padding:13px 14px; font:inherit; color:var(--ink); background:#fff; }
+      .amount-options { display:flex; flex-wrap:wrap; gap:8px; }
+      .amount-options button { border:1px solid var(--line); border-radius:999px; padding:9px 14px; background:#fff; color:var(--ink); cursor:pointer; font-weight:700; }
+      .amount-options button.active { background:#f1e6ef; border-color:var(--blue); }
+      .donation-submit { border:0; border-radius:12px; padding:14px 18px; background:var(--blue); color:#fff; font:700 14px "DM Sans"; cursor:pointer; }
+      .donation-submit:disabled { opacity:.6; cursor:wait; }
+      .donation-status { min-height:24px; color:#3e4864; font-size:14px; line-height:1.5; }
+      .donation-note { font-size:12px!important; margin-top:8px!important; }
+
       .footer {
         background: #192457;
         color: #c7d2f5;
@@ -358,6 +370,24 @@
               >
             </div>
           </article>
+          <article class="card" id="donate-online">
+            <h3>Make a secure donation</h3>
+            <p>Choose an amount and complete your contribution securely through Razorpay.</p>
+            <form class="donation-form" id="donation-form">
+              <div class="amount-options" aria-label="Suggested donation amounts">
+                <button type="button" data-amount="500" class="active">₹500</button>
+                <button type="button" data-amount="1000">₹1,000</button>
+                <button type="button" data-amount="2500">₹2,500</button>
+                <button type="button" data-amount="5000">₹5,000</button>
+              </div>
+              <label>Donation amount (₹)<input id="donation-amount" type="number" min="1" max="100000" step="1" value="500" required /></label>
+              <label>Your name<input id="donor-name" type="text" maxlength="120" autocomplete="name" required /></label>
+              <label>Email address<input id="donor-email" type="email" maxlength="254" autocomplete="email" required /></label>
+              <button class="donation-submit" id="donation-submit" type="submit">Donate securely</button>
+              <p class="donation-status" id="donation-status" role="status" aria-live="polite"></p>
+              <p class="donation-note">Test-mode payments only until the live Razorpay keys and webhook are configured. Never enter card or UPI details anywhere except the secure Razorpay checkout.</p>
+            </form>
+          </article>
           <article class="card">
             <h3>Why people give</h3>
             <p class="quote">
@@ -376,5 +406,79 @@
       <p>Good things happen when people do.</p>
       <small>© 2026 EarthKind NGO</small>
     </footer>
+
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script>
+      (() => {
+        const API = "https://ngo-pi3s.onrender.com/api";
+        const form = document.getElementById("donation-form");
+        if (!form) return;
+        const amountInput = document.getElementById("donation-amount");
+        const status = document.getElementById("donation-status");
+        const submit = document.getElementById("donation-submit");
+        document.querySelectorAll("[data-amount]").forEach((button) => {
+          button.addEventListener("click", () => {
+            amountInput.value = button.dataset.amount;
+            document.querySelectorAll("[data-amount]").forEach((item) => item.classList.toggle("active", item === button));
+          });
+        });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          status.textContent = "";
+          const amount = Number(amountInput.value);
+          const name = document.getElementById("donor-name").value.trim();
+          const email = document.getElementById("donor-email").value.trim();
+          if (!Number.isFinite(amount) || amount < 1 || amount > 100000 || !Number.isInteger(amount)) {
+            status.textContent = "Enter a whole-rupee amount between ₹1 and ₹1,00,000.";
+            return;
+          }
+          if (!window.Razorpay) {
+            status.textContent = "Secure checkout could not load. Please refresh and try again.";
+            return;
+          }
+          submit.disabled = true;
+          submit.textContent = "Preparing secure checkout…";
+          try {
+            const response = await fetch(API + "/payments/razorpay/orders", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ amount, name, email }),
+            });
+            const order = await response.json();
+            if (!response.ok) throw new Error(order.error || "Could not start donation.");
+            const checkout = new Razorpay({
+              key: order.keyId, amount: order.amount, currency: order.currency,
+              name: "EarthKind NGO", description: "Community support donation",
+              order_id: order.orderId, prefill: { name, email },
+              theme: { color: "#7b3f68" },
+              handler: async (result) => {
+                status.textContent = "Verifying your payment securely…";
+                try {
+                  const verified = await fetch(API + "/payments/razorpay/verify", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(result),
+                  });
+                  const data = await verified.json();
+                  if (!verified.ok && verified.status !== 202) throw new Error(data.error || "Payment verification failed.");
+                  status.textContent = data.message || "Payment is being confirmed. Thank you!";
+                } catch (error) {
+                  status.textContent = error.message + " Your payment may still be processing; please contact EarthKind with your payment reference.";
+                }
+              },
+              modal: { ondismiss: () => { status.textContent = "Checkout closed. If you completed payment, it may still be processing."; } },
+            });
+            checkout.on("payment.failed", (failure) => {
+              status.textContent = failure.error?.description || "Payment was not completed. Please try again.";
+            });
+            checkout.open();
+          } catch (error) {
+            status.textContent = error.message || "Something went wrong. Please try again.";
+          } finally {
+            submit.disabled = false;
+            submit.textContent = "Donate securely";
+          }
+        });
+      })();
+    </script>
+
   </body>
 </html>
