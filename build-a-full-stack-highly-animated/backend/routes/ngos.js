@@ -45,6 +45,32 @@ router.get('/',async(req,res,next)=>{
 
 router.get('/categories',async(req,res,next)=>{try{res.json(await Category.find().sort({name:1}).select('name slug'));}catch(error){next(error);}});
 
+router.get('/opportunities',async(req,res,next)=>{try{const verified=await NGO.find({status:'VERIFIED'}).distinct('_id');res.json(await VolunteerOpportunity.find({ngo:{$in:verified},status:'published'}).populate('ngo','name slug logo city state').sort({date:1,createdAt:-1}));}catch(error){next(error);}});
+router.post('/opportunities/:id/apply',requireAuth,requireRole('USER'),async(req,res,next)=>{try{
+  if(!validId(req.params.id))return badId(res,'Invalid opportunity id');
+  const opportunity=await VolunteerOpportunity.findOne({_id:req.params.id,status:'published'}).populate('ngo','status');
+  if(!opportunity||opportunity.ngo?.status!=='VERIFIED')return notFound(res,'Published opportunity not found');
+  if(opportunity.slots!=null&&opportunity.filled>=opportunity.slots)return res.status(409).json({error:'This opportunity has no remaining slots'});
+  const fullName=clean(req.body.fullName)||req.auth.account.name;
+  const email=clean(req.body.email)||req.auth.account.email;
+  if(!fullName||!email||req.body.consent!==true)return res.status(400).json({error:'Name, email, and consent are required'});
+  const application=await VolunteerApplication.create({user:req.auth.id,opportunity:opportunity._id,fullName,email,phone:clean(req.body.phone),age:req.body.age?Number(req.body.age):undefined,skills:clean(req.body.skills),experience:clean(req.body.experience),availability:clean(req.body.availability),motivation:clean(req.body.motivation),consent:true});
+  await VolunteerOpportunity.updateOne({_id:opportunity._id},{$inc:{filled:1}});
+  res.status(201).json({application});
+}catch(error){if(error?.code===11000)return res.status(409).json({error:'You have already applied to this opportunity'});next(error);}});
+router.get('/me/applications',requireAuth,requireRole('USER'),async(req,res,next)=>{try{res.json(await VolunteerApplication.find({user:req.auth.id}).populate({path:'opportunity',select:'title location date duration ngo',populate:{path:'ngo',select:'name slug'}}).sort({createdAt:-1}));}catch(error){next(error);}});
+router.post('/events/:id/register',requireAuth,requireRole('USER'),async(req,res,next)=>{try{
+  if(!validId(req.params.id))return badId(res,'Invalid event id');
+  const event=await Event.findOne({_id:req.params.id,status:'published'});
+  if(!event)return notFound(res,'Published event not found');
+  const ngo=await NGO.findOne({_id:event.ngo,status:'VERIFIED'}).select('_id');
+  if(!ngo)return notFound(res,'Published event not found');
+  const registration=await EventRegistration.create({user:req.auth.id,event:event._id});
+  const updated=await Event.findOneAndUpdate({_id:event._id,status:'published',$or:[{capacity:{$exists:false}},{capacity:null},{$expr:{$lt:['$registered','$capacity']}}]},{$inc:{registered:1}},{new:true});
+  if(!updated){await EventRegistration.deleteOne({_id:registration._id});return res.status(409).json({error:'This event is full or registration is closed'});}
+  res.status(201).json({registration});
+}catch(error){if(error?.code===11000)return res.status(409).json({error:'You are already registered for this event'});next(error);}});
+router.get('/me/event-registrations',requireAuth,requireRole('USER'),async(req,res,next)=>{try{res.json(await EventRegistration.find({user:req.auth.id}).populate({path:'event',select:'name location date time image ngo',populate:{path:'ngo',select:'name slug'}}).sort({createdAt:-1}));}catch(error){next(error);}});
 router.get('/:id',async(req,res,next)=>{
   try{
     if(req.params.id==='ngo'||req.params.id==='admin')return next();
