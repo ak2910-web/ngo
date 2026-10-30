@@ -45,7 +45,7 @@ app.use(cors({
 }));
 
 // Razorpay webhooks require the untouched request bytes for signature verification.
-app.post("/api/payments/razorpay/webhook", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+app.post("/api/payments/razorpay/webhook", rateLimit({ windowMs: 15 * 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false }), express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
   const signature = req.get("x-razorpay-signature");
   if (!secret || !signature || !Buffer.isBuffer(req.body)) return res.sendStatus(400);
