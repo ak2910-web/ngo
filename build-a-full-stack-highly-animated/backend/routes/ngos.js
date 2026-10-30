@@ -65,6 +65,16 @@ router.post('/opportunities/:id/apply',requireAuth,requireRole('USER'),async(req
   }
 }catch(error){next(error);}});
 router.get('/me/applications',requireAuth,requireRole('USER'),async(req,res,next)=>{try{res.json(await VolunteerApplication.find({user:req.auth.id}).populate({path:'opportunity',select:'title location date duration ngo',populate:{path:'ngo',select:'name slug'}}).sort({createdAt:-1}));}catch(error){next(error);}});
+router.post('/me/applications/:id/withdraw',requireAuth,requireRole('USER'),async(req,res,next)=>{try{
+  if(!validId(req.params.id))return badId(res,'Invalid application id');
+  const application=await VolunteerApplication.findOne({_id:req.params.id,user:req.auth.id});
+  if(!application)return notFound(res,'Application not found');
+  if(!['pending','accepted'].includes(application.status))return res.status(409).json({error:'This application can no longer be withdrawn'});
+  application.status='withdrawn';
+  await application.save();
+  await VolunteerOpportunity.updateOne({_id:application.opportunity,filled:{$gt:0}},{$inc:{filled:-1}});
+  res.json({success:true,application});
+}catch(error){next(error);}});
 router.post('/events/:id/register',requireAuth,requireRole('USER'),async(req,res,next)=>{try{
   if(!validId(req.params.id))return badId(res,'Invalid event id');
   const event=await Event.findOne({_id:req.params.id,status:'published'});
@@ -77,6 +87,16 @@ router.post('/events/:id/register',requireAuth,requireRole('USER'),async(req,res
   res.status(201).json({registration});
 }catch(error){if(error?.code===11000)return res.status(409).json({error:'You are already registered for this event'});next(error);}});
 router.get('/me/event-registrations',requireAuth,requireRole('USER'),async(req,res,next)=>{try{res.json(await EventRegistration.find({user:req.auth.id}).populate({path:'event',select:'name location date time image ngo',populate:{path:'ngo',select:'name slug'}}).sort({createdAt:-1}));}catch(error){next(error);}});
+router.post('/me/event-registrations/:id/cancel',requireAuth,requireRole('USER'),async(req,res,next)=>{try{
+  if(!validId(req.params.id))return badId(res,'Invalid registration id');
+  const registration=await EventRegistration.findOne({_id:req.params.id,user:req.auth.id});
+  if(!registration)return notFound(res,'Event registration not found');
+  if(registration.status!=='registered')return res.status(409).json({error:'This registration is not active'});
+  registration.status='cancelled';
+  await registration.save();
+  await Event.updateOne({_id:registration.event,registered:{$gt:0}},{$inc:{registered:-1}});
+  res.json({success:true,registration});
+}catch(error){next(error);}});
 router.get('/:id',async(req,res,next)=>{
   try{
     if(req.params.id==='ngo'||req.params.id==='admin')return next();
