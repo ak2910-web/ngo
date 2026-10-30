@@ -1,11 +1,14 @@
 import crypto from 'crypto';
 import express from 'express';
+import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import rateLimit from 'express-rate-limit';
+import nodemailer from 'nodemailer';
 import {AdminUser,Category,NGO,PasswordResetToken,User} from '../models.js';
 import {getJwtSecret,requireAuth,signToken} from '../middleware/auth.js';
 
 const router=express.Router();
-const emailPattern=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const emailPattern=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
 const clean=value=>typeof value==='string'?value.trim().slice(0,1000):value;
 const cleanArray=value=>Array.isArray(value)?value.map(clean).filter(Boolean).slice(0,30):typeof value==='string'?value.split(',').map(clean).filter(Boolean).slice(0,30):[];
 const passwordOk=value=>typeof value==='string'&&value.length>=8&&value.length<=128;
@@ -15,10 +18,41 @@ const uniqueError=error=>error?.code===11000;
 const slugify=value=>clean(value).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,80);
 const invalid=(res,message)=>res.status(400).json({error:message});
 
-async function issuePasswordReset(user){
+const loginLimiter=rateLimit({
+  windowMs:15*60*1000,
+  max:10,
+  standardHeaders:true,
+  legacyHeaders:false,
+  message:{error:'Too many login attempts. Please try again in 15 minutes.'}
+});
+const mailer=process.env.SMTP_HOST?nodemailer.createTransport({
+  host:process.env.SMTP_HOST,
+  port:Number(process.env.SMTP_PORT)||587,
+  secure:Number(process.env.SMTP_PORT)===465,
+  auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}
+}):null;
+const resetFrontend=(process.env.FRONTEND_ORIGIN||'http://localhost:3000').split(',')[0].trim().replace(/\\/$/,'');
+
+async function issuePasswordReset(account,accountType){
   const rawToken=crypto.randomBytes(32).toString('hex');
-  await PasswordResetToken.create({user:user._id,tokenHash:crypto.createHash('sha256').update(rawToken).digest('hex'),expiresAt:new Date(Date.now()+60*60*1000)});
-  return rawToken;
+  await PasswordResetToken.create({
+    user:account._id,
+    accountType,
+    tokenHash:crypto.createHash('sha256').update(rawToken).digest('hex'),
+    expiresAt:new Date(Date.now()+60*60*1000)
+  });
+  const link=`${resetFrontend}/reset-password.html?token=${encodeURIComponent(rawToken)}`;
+  if(!mailer) {
+    console.warn('Password reset requested but SMTP is not configured.');
+    return false;
+  }
+  await mailer.sendMail({
+    from:process.env.MAIL_FROM||'EarthKind <noreply@earthkind.org>',
+    to:account.email,
+    subject:'Reset your EarthKind password',
+    text:`We received a request to reset your EarthKind password. This link expires in one hour and can be used once:\n\n${link}\n\nIf you did not request this, you can ignore this email.`
+  });
+  return true;
 }
 
 router.post('/register',async(req,res,next)=>{
@@ -44,10 +78,10 @@ async function login(req,res,next){
   }catch(error){next(error);}
 }
 
-router.post('/login',login);
-router.post('/admin/login',login);
-router.post('/user/login',login);
-router.post('/ngo/login',login);
+router.post('/login',loginLimiter,login);
+router.post('/admin/login',loginLimiter,login);
+router.post('/user/login',loginLimiter,login);
+router.post('/ngo/login',loginLimiter,login);
 
 router.post('/ngo/register',async(req,res,next)=>{
   try{
@@ -72,9 +106,13 @@ router.post('/forgot-password',async(req,res,next)=>{
   try{
     const email=clean(req.body.email)?.toLowerCase();
     if(!emailPattern.test(email||''))return invalid(res,'A valid email is required');
-    const account=await User.findOne({email});
-    if(account)await issuePasswordReset(account);
-    res.json({message:'If an account exists, password reset instructions have been prepared'});
+    const account=await AdminUser.findOne({email})||await User.findOne({email})||await NGO.findOne({email});
+    if(account){
+      const accountType=account instanceof AdminUser?'ADMIN':account instanceof NGO?'NGO':'USER';
+      try{await issuePasswordReset(account,accountType);}
+      catch(mailError){console.error('Password reset email could not be sent:',mailError.message);}
+    }
+    res.json({message:'If an account exists, password reset instructions will be sent to its email address'});
   }catch(error){next(error);}
 });
 
@@ -85,10 +123,17 @@ router.post('/reset-password',async(req,res,next)=>{
     const tokenHash=crypto.createHash('sha256').update(rawToken).digest('hex');
     const reset=await PasswordResetToken.findOne({tokenHash,usedAt:null,expiresAt:{$gt:new Date()}});
     if(!reset)return res.status(400).json({error:'Invalid or expired reset token'});
-    const user=await User.findById(reset.user);
-    if(!user)return res.status(400).json({error:'Invalid reset token'});
-    user.passwordHash=await bcrypt.hash(password,12);await user.save();reset.usedAt=new Date();await reset.save();
-    res.json({success:true});
+    const accountType=reset.accountType||'USER';
+    const Model=accountType==='ADMIN'?AdminUser:accountType==='NGO'?NGO:User;
+    const account=await Model.findById(reset.user);
+    if(!account)return res.status(400).json({error:'Invalid reset token'});
+    account.passwordHash=await bcrypt.hash(password,12);
+    if(typeof account.tokenVersion==='number')account.tokenVersion+=1;
+    await account.save();
+    reset.usedAt=new Date();
+    await reset.save();
+    await PasswordResetToken.deleteMany({user:account._id,_id:{$ne:reset._id}});
+    res.json({success:true,message:'Password updated. Please sign in again.'});
   }catch(error){next(error);}
 });
 
