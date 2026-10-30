@@ -132,7 +132,7 @@ router.post('/reset-password',async(req,res,next)=>{
     await account.save();
     reset.usedAt=new Date();
     await reset.save();
-    await PasswordResetToken.deleteMany({user:account._id,_id:{$ne:reset._id}});
+    await PasswordResetToken.deleteMany({user:account._id,accountType,_id:{$ne:reset._id}});
     res.json({success:true,message:'Password updated. Please sign in again.'});
   }catch(error){next(error);}
 });
