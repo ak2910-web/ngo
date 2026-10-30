@@ -14,7 +14,7 @@ export async function requireAuth(req,res,next){
     if(!header.startsWith('Bearer '))return res.status(401).json({error:'Authentication required'});
     const payload=jwt.verify(header.slice(7),jwtSecret());
     let account=null;
-    if(payload.role==='ADMIN')account=await AdminUser.findById(payload.id).select('_id name email role');
+    if(payload.role==='ADMIN')account=await AdminUser.findById(payload.id).select('_id name email role tokenVersion');
     if(payload.role==='NGO')account=await NGO.findById(payload.id).select('-passwordHash');
     if(payload.role==='USER')account=await User.findById(payload.id).select('-passwordHash');
     if(!account||payload.tokenVersion!==(account.tokenVersion||0))return res.status(401).json({error:'Account session is no longer valid'});
