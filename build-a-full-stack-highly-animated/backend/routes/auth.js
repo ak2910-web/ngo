@@ -8,7 +8,7 @@ import {AdminUser,Category,NGO,PasswordResetToken,User} from '../models.js';
 import {getJwtSecret,requireAuth,signToken} from '../middleware/auth.js';
 
 const router=express.Router();
-const emailPattern=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+const emailPattern=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const clean=value=>typeof value==='string'?value.trim().slice(0,1000):value;
 const cleanArray=value=>Array.isArray(value)?value.map(clean).filter(Boolean).slice(0,30):typeof value==='string'?value.split(',').map(clean).filter(Boolean).slice(0,30):[];
 const passwordOk=value=>typeof value==='string'&&value.length>=8&&value.length<=128;
@@ -31,7 +31,7 @@ const mailer=process.env.SMTP_HOST?nodemailer.createTransport({
   secure:Number(process.env.SMTP_PORT)===465,
   auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}
 }):null;
-const resetFrontend=(process.env.FRONTEND_ORIGIN||'http://localhost:3000').split(',')[0].trim().replace(/\\/$/,'');
+const resetFrontend=(process.env.FRONTEND_ORIGIN||'http://localhost:3000').split(',')[0].trim().replace(/\/+$/,'');
 
 async function issuePasswordReset(account,accountType){
   const rawToken=crypto.randomBytes(32).toString('hex');
@@ -108,7 +108,7 @@ router.post('/forgot-password',async(req,res,next)=>{
     if(!emailPattern.test(email||''))return invalid(res,'A valid email is required');
     const account=await AdminUser.findOne({email})||await User.findOne({email})||await NGO.findOne({email});
     if(account){
-      const accountType=account instanceof AdminUser?'ADMIN':account instanceof NGO?'NGO':'USER';
+      const accountType=account.constructor.modelName==='AdminUser'?'ADMIN':account.constructor.modelName==='NGO'?'NGO':'USER';
       try{await issuePasswordReset(account,accountType);}
       catch(mailError){console.error('Password reset email could not be sent:',mailError.message);}
     }
