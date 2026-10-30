@@ -18,7 +18,7 @@ export const ImpactReport=model('ImpactReport',new Schema({ngo:{...objectId,ref:
 export const Notification=model('Notification',new Schema({user:{...objectId,ref:'User',required:true},type:{type:String,required:true},title:{type:String,required:true},message:{type:String,required:true},readAt:Date,isDemo:{type:Boolean,default:false}},{timestamps:true}));
 export const SavedItem=model('SavedItem',new Schema({user:{...objectId,ref:'User',required:true},itemType:{type:String,enum:['NGO','PROJECT','OPPORTUNITY','EVENT'],required:true},item:{type:Schema.Types.ObjectId,required:true},isDemo:{type:Boolean,default:false}},{timestamps:true}));
 SavedItem.schema.index({user:1,itemType:1,item:1},{unique:true});
-export const PasswordResetToken=model('PasswordResetToken',new Schema({user:{...objectId,ref:'User',required:true},tokenHash:{type:String,required:true,unique:true},expiresAt:{type:Date,required:true},usedAt:Date},{timestamps:true}));
+export const PasswordResetToken=model('PasswordResetToken',new Schema({user:{...objectId,required:true},accountType:{type:String,enum:['USER','NGO','ADMIN'],default:'USER'},tokenHash:{type:String,required:true,unique:true},expiresAt:{type:Date,required:true},usedAt:Date},{timestamps:true}));
 PasswordResetToken.schema.index({expiresAt:1},{expireAfterSeconds:0});
 export const ContactMessage=model('ContactMessage',new Schema({name:String,email:{type:String,required:true},message:String,status:{type:String,enum:['new','contacted','replied','closed'],default:'new'},followUpAt:Date,adminNotes:String,repliedAt:Date},{timestamps:true}));
 export const DonationEnquiry=model('DonationEnquiry',new Schema({name:{type:String,required:true},email:{type:String,required:true},amount:String,message:String},{timestamps:true}));
