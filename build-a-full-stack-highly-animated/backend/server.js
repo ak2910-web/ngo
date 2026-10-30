@@ -86,7 +86,22 @@ async function paginated(Model, req, res, sort) {
     limit = Math.min(60, Math.max(1, +req.query.limit || 20)),
     filter = {};
   if (req.query.category) filter.category = req.query.category;
+  if (req.query.location) {
+    const safeLocation = String(req.query.location).slice(0, 100).replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\  if (req.query.category) filter.category = req.query.category;
   if (req.query.location) filter.location = new RegExp(req.query.location, "i");
+  const [data, total] = await Promise.all([");
+    filter.location = new RegExp(safeLocation, "i");
+  }
+  const verifiedNgoIds = await NGO.find({ status: "VERIFIED" }).distinct("_id");
+  if (Model === Project) {
+    filter.ngo = { $in: verifiedNgoIds };
+    filter.status = { $nin: ["draft", "archived"] };
+  } else if (Model === Event) {
+    filter.ngo = { $in: verifiedNgoIds };
+    filter.status = "published";
+  } else if (Model === GalleryImage) {
+    filter.ngo = { $in: verifiedNgoIds };
+  }
   const [data, total] = await Promise.all([
     Model.find(filter)
       .sort(sort)
@@ -115,22 +130,25 @@ app.get("/api/search", async (req, res) => {
       pages: [],
     });
   const regex = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  const verifiedNgoIds = await NGO.find({ status: "VERIFIED" }).distinct("_id");
   const [projects, events, volunteer, gallery] = await Promise.all([
     Project.find({
-      $or: [
-        { name: regex },
-        { category: regex },
-        { location: regex },
-        { description: regex },
-      ],
+      ngo: { $in: verifiedNgoIds },
+      status: { $nin: ["draft", "archived"] },
+      $or: [{ name: regex }, { category: regex }, { location: regex }, { description: regex }],
     }).limit(8),
     Event.find({
+      ngo: { $in: verifiedNgoIds },
+      status: "published",
       $or: [{ name: regex }, { location: regex }, { description: regex }],
     }).limit(8),
-    Volunteer.find({ $or: [{ skills: regex }, { location: regex }] })
-      .select("skills location availability")
-      .limit(8),
+    VolunteerOpportunity.find({
+      ngo: { $in: verifiedNgoIds },
+      status: "published",
+      $or: [{ title: regex }, { skills: regex }, { location: regex }, { description: regex }],
+    }).populate("ngo", "name slug").limit(8),
     GalleryImage.find({
+      ngo: { $in: verifiedNgoIds },
       $or: [{ tags: regex }, { caption: regex }, { location: regex }],
     }).limit(8),
   ]);
@@ -144,9 +162,11 @@ app.get("/api/search", async (req, res) => {
     projects,
     events,
     volunteer: volunteer.map((v) => ({
-      name: `Volunteer opportunity: ${v.skills || "Community support"}`,
-      description: v.availability,
+      name: v.title,
+      description: v.description,
       location: v.location,
+      ngo: v.ngo?.name,
+      id: v._id,
     })),
     gallery: gallery.map((g) => ({
       name: g.caption || "EarthKind gallery moment",
